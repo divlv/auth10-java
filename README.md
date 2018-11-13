@@ -6,9 +6,9 @@ The code is a simplified version with some improvements of the library released 
 
 Clone it
 
-	git clone https://github.com/auth10/auth10-java.git
+	git clone https://github.com/divlv/auth10-java.git
 
-Or download it as zip from <https://github.com/auth10/auth10-java/zipball/master>
+Or download it as zip from <https://github.com/divlv/auth10-java/zipball/master>
 
 Import the Maven that was just downloaded in your project (File -> Import -> Existing Maven Projects)
 
@@ -20,22 +20,36 @@ Add a reference to `com.auth10.federation` library from your project. Edit your 
 	<dependency>
 		<groupId>com.auth10.federation</groupId>
 		<artifactId>auth10-federation</artifactId>
-		<version>0.0.1-SNAPSHOT</version>
+		<version>0.9.3</version>
 	</dependency>
 	...
 </dependencies>
 ```
 
-Add a federation.properties file under `resources` folder:
+Add a **federation.properties** file under your app server's `resources` folder (e.g. /your_tomcat/conf/federation.properties):
 
 ```
+#
+# "keystore.file" is a Resource file, so it should be within Tomcat/conf directory
+keystore.file=/mykeystore.jks
+keystore.password=Geyser66us79Spoonful
+keystore.certificate.alias=mycertificate1
+#
 federation.trustedissuers.issuer=https://your_identity_provider/
 federation.trustedissuers.thumbprint=CF50166CE4B....signing cert thumbprint...4DA668F96BF
 federation.trustedissuers.friendlyname=My Identity Provider
+# (in most cases, the return URL below)
 federation.audienceuris=http://localhost:8080/sample-federation/
+# (in most cases, the return URL below)
 federation.realm=http://localhost:8080/sample-federation/
 federation.enableManualRedirect=false
+# (in most cases, the return URL below)
+federation.reply=http://localhost:8080/sample-federation/
 ```
+
+Place Java Key Store file with your validation certificate near your **federation.properties** file.
+"keystore.password" - is a password to decrypt keystore and the certificate will be searched by "keystore.certificate.alias".  
+
 
 Add the `WSFederationFilter` to the `web.xml` file:
 
