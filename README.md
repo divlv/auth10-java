@@ -1,4 +1,4 @@
-##Forked version of "auth10-java" library with fixed bugs and extended functionality 
+## Forked version of "auth10-java" library with fixed bugs and extended functionality 
 This library speaks the WS-Federation protocol and SAML 1.1 and 2.0 tokens. It interops fine with Microsoft-related products like ADFS, Windows Azure Active Directory and Windows Identity Foundation.
 
 The code is a simplified version with some improvements of the library released by Microsoft <https://github.com/WindowsAzure/azure-sdk-for-java-samples>. 
