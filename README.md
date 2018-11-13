@@ -3,6 +3,8 @@ This library speaks the WS-Federation protocol and SAML 1.1 and 2.0 tokens. It i
 
 The code is a simplified version with some improvements of the library released by Microsoft <https://github.com/WindowsAzure/azure-sdk-for-java-samples>. 
 
+**This version uses secure certificate to verify the response authority from your authentication provider.**
+
 ## Usage
 
 Clone it
