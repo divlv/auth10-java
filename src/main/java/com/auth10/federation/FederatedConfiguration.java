@@ -82,6 +82,19 @@ public class FederatedConfiguration {
 		return this.properties.getProperty("federation.reply");
 	}
 
+    public String getKeyStoreFilePath() {
+    		return this.properties.getProperty("keystore.file");
+    	}
+
+    public String getKeyStorePassword() {
+        		return this.properties.getProperty("keystore.password");
+        	}
+
+    public String getKeyStoreCertificateAlias() {
+            		return this.properties.getProperty("keystore.certificate.alias");
+            	}
+
+
 	public String[] getTrustedIssuers() {
 		String trustedIssuers = this.properties.getProperty("federation.trustedissuers.subjectname");
 		

@@ -27,29 +27,11 @@
 
 package com.auth10.federation;
 
-import java.io.IOException;
-import java.io.StringReader;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.security.KeyException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateEncodingException;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.transform.TransformerException;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.opensaml.Configuration;
 import org.opensaml.DefaultBootstrap;
 import org.opensaml.common.SignableSAMLObject;
-
 import org.opensaml.xml.ConfigurationException;
 import org.opensaml.xml.XMLObject;
 import org.opensaml.xml.io.Unmarshaller;
@@ -59,6 +41,7 @@ import org.opensaml.xml.security.SecurityException;
 import org.opensaml.xml.security.SecurityTestHelper;
 import org.opensaml.xml.security.credential.CollectionCredentialResolver;
 import org.opensaml.xml.security.credential.Credential;
+import org.opensaml.xml.security.credential.KeyStoreCredentialResolver;
 import org.opensaml.xml.security.criteria.EntityIDCriteria;
 import org.opensaml.xml.security.keyinfo.KeyInfoCredentialResolver;
 import org.opensaml.xml.security.keyinfo.KeyInfoHelper;
@@ -67,11 +50,33 @@ import org.opensaml.xml.signature.KeyInfo;
 import org.opensaml.xml.signature.Signature;
 import org.opensaml.xml.signature.impl.ExplicitKeySignatureTrustEngine;
 import org.opensaml.xml.validation.ValidationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.TransformerException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.security.KeyException;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @SuppressWarnings("deprecation")
 public class SamlTokenValidator {
@@ -80,6 +85,9 @@ public class SamlTokenValidator {
 	private List<URI> audienceUris;
 	private boolean validateExpiration = true;
 	private String thumbprint;
+
+    /** Getting Logger */
+    private static final Logger log = LoggerFactory.getLogger(SamlTokenValidator.class);
 
 	public SamlTokenValidator() throws ConfigurationException {
 		this(new ArrayList<String>(), new ArrayList<URI>());
@@ -125,25 +133,41 @@ public class SamlTokenValidator {
 			NoSuchAlgorithmException {
 		
 		SignableSAMLObject samlToken;
+
+        log.debug("EnvelopedToken = " + envelopedToken);
 		
 		if (envelopedToken.contains("RequestSecurityTokenResponse")) {
+            log.debug("Getting SAML token from RStr");
 			samlToken = getSamlTokenFromRstr(envelopedToken);
 		} else {
+            log.debug("Getting SAML token from Saml Response");
 			samlToken = getSamlTokenFromSamlResponse(envelopedToken);
 		}
 
-		boolean valid = validateToken(samlToken);
+        boolean valid = false;
+        try {
+            valid = validateToken(samlToken);
+        } catch (Exception e) {
+            log.error("Token validation exception!");
+            e.printStackTrace();
+            throw new FederationException(e);
+        }
 		
 		if (!valid) {
+            log.error("Invalid signature");
 			throw new FederationException("Invalid signature");
-		}
+		} else {
+            log.debug("Token is valid. Good.");
+        }
 
 		boolean trusted = false;
 
+        log.debug("Starting - validateIssuerUsingSubjectName...");
 		for (String issuer : this.trustedIssuers) {
 			trusted |= validateIssuerUsingSubjectName(samlToken, issuer);
 		}
 
+        log.debug("Starting - validateIssuerUsingCertificateThumbprint...");
 		if (!trusted && (this.thumbprint != null)) {
 			trusted = validateIssuerUsingCertificateThumbprint(samlToken,
 					this.thumbprint);
@@ -152,7 +176,9 @@ public class SamlTokenValidator {
 		if (!trusted) {
 			throw new FederationException(
 					"The token was issued by an authority that is not trusted");
-		}
+		} else {
+            log.debug("Data (subject/thumbprint) is trusted.");
+        }
 
 		String address = null;
 		if (samlToken instanceof org.opensaml.saml1.core.Assertion) {
@@ -235,11 +261,14 @@ public class SamlTokenValidator {
 
 		if (nodes.getLength() == 0) {
 			throw new FederationException("SAML token was not found");
-		}
+		} else {
+		    log.debug("SAML token detected. Good.");
+        }
 
 		Element samlTokenElement = (Element) nodes.item(0);
 		Unmarshaller unmarshaller = Configuration.getUnmarshallerFactory().getUnmarshaller(samlTokenElement);
 		SignableSAMLObject samlToken = (SignableSAMLObject) unmarshaller.unmarshall(samlTokenElement);
+        log.debug("SAML Token: "+samlToken);
 
 		return samlToken;
 	}
@@ -273,37 +302,76 @@ public class SamlTokenValidator {
 		return false;
 	}
 
-	private static boolean validateToken(SignableSAMLObject samlToken)
-			throws SecurityException, ValidationException,
-			ConfigurationException, UnmarshallingException,
-			CertificateException, KeyException {
-		
-		samlToken.validate(true);
-		Signature signature = samlToken.getSignature();
-		KeyInfo keyInfo = signature.getKeyInfo();
-		X509Certificate pubKey = (X509Certificate) KeyInfoHelper
-				.getCertificates(keyInfo).get(0);
+//	private static boolean validateToken(SignableSAMLObject samlToken)
+//			throws SecurityException, ValidationException,
+//			ConfigurationException, UnmarshallingException,
+//			CertificateException, KeyException {
+//
+//		samlToken.validate(true);
+//		Signature signature = samlToken.getSignature();
+//		KeyInfo keyInfo = signature.getKeyInfo();
+//		X509Certificate pubKey = (X509Certificate) KeyInfoHelper
+//				.getCertificates(keyInfo).get(0);
+//
+//		BasicX509Credential cred = new BasicX509Credential();
+//		cred.setEntityCertificate(pubKey);
+//		cred.setEntityId("signing-entity-ID");
+//
+//		ArrayList<Credential> trustedCredentials = new ArrayList<Credential>();
+//		trustedCredentials.add(cred);
+//
+//		CollectionCredentialResolver credResolver = new CollectionCredentialResolver(
+//				trustedCredentials);
+//
+//		KeyInfoCredentialResolver kiResolver = SecurityTestHelper
+//				.buildBasicInlineKeyInfoResolver();
+//		ExplicitKeySignatureTrustEngine engine = new ExplicitKeySignatureTrustEngine(
+//				credResolver, kiResolver);
+//
+//		CriteriaSet criteriaSet = new CriteriaSet();
+//		criteriaSet.add(new EntityIDCriteria("signing-entity-ID"));
+//
+//		return engine.validate(signature, criteriaSet);
+//	}
 
-		BasicX509Credential cred = new BasicX509Credential();
-		cred.setEntityCertificate(pubKey);
-		cred.setEntityId("signing-entity-ID");
 
-		ArrayList<Credential> trustedCredentials = new ArrayList<Credential>();
-		trustedCredentials.add(cred);
+    private static boolean validateToken(SignableSAMLObject samlToken) throws Exception {
+        log.debug("Token Validation started");
+        samlToken.validate(true);
+        Signature signature = samlToken.getSignature();
+        log.debug("Got signature. Loading keystore from local file...");
 
-		CollectionCredentialResolver credResolver = new CollectionCredentialResolver(
-				trustedCredentials);
+        KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
 
-		KeyInfoCredentialResolver kiResolver = SecurityTestHelper
-				.buildBasicInlineKeyInfoResolver();
-		ExplicitKeySignatureTrustEngine engine = new ExplicitKeySignatureTrustEngine(
-				credResolver, kiResolver);
+        final String keyStoreFilePath = FederatedConfiguration.getInstance().getKeyStoreFilePath();
+        InputStream inputStream = SamlTokenValidator.class.getResourceAsStream(keyStoreFilePath);
 
-		CriteriaSet criteriaSet = new CriteriaSet();
-		criteriaSet.add(new EntityIDCriteria("signing-entity-ID"));
+        final String keyStorePassword = FederatedConfiguration.getInstance().getKeyStorePassword();
+        keystore.load(inputStream, keyStorePassword.toCharArray());
+        inputStream.close();
 
-		return engine.validate(signature, criteriaSet);
-	}
+        log.debug("Keystore loaded and decrypted successfully.");
+
+        Map<String, String> passwordMap = new HashMap<String, String>();
+        KeyStoreCredentialResolver keyStoreCredentialResolver = new KeyStoreCredentialResolver(keystore, passwordMap);
+        log.debug("KeyStoreCredentialResolver created");
+
+        KeyInfoCredentialResolver kiResolver = SecurityTestHelper.buildBasicInlineKeyInfoResolver();
+        log.debug("KeyInfoCredentialResolver built");
+
+        ExplicitKeySignatureTrustEngine engine = new ExplicitKeySignatureTrustEngine(keyStoreCredentialResolver, kiResolver);
+        log.debug("ExplicitKeySignatureTrustEngine created");
+
+        CriteriaSet criteriaSet = new CriteriaSet();
+        // should match the server certificate alias in keystore
+        final String certificateAlias = FederatedConfiguration.getInstance().getKeyStoreCertificateAlias();
+        criteriaSet.add(new EntityIDCriteria(certificateAlias));
+        final boolean validate = engine.validate(signature, criteriaSet);
+        log.debug("ExplicitKeySignatureTrustEngine validation result = "+validate);
+
+        return validate;
+    }
+
 
 	private static boolean validateIssuerUsingSubjectName(
 			SignableSAMLObject samlToken, String subjectName)
@@ -315,6 +383,10 @@ public class SamlTokenValidator {
 		X509Certificate pubKey = KeyInfoHelper.getCertificates(keyInfo).get(0);
 
 		String issuer = pubKey.getSubjectDN().getName();
+
+        log.debug("validateIssuerUsingSubjectName: issuer = " + issuer);
+        log.debug("validateIssuerUsingSubjectName: subjectName = " + subjectName);
+
 		return issuer.equals(subjectName);
 	}
 
@@ -329,6 +401,9 @@ public class SamlTokenValidator {
 
 		String thumbprintFromToken = SamlTokenValidator
 				.getThumbPrintFromCert(pubKey);
+
+        log.debug("validateIssuerUsingCertificateThumbprint: thumbprint received from server = " + thumbprintFromToken);
+        log.debug("validateIssuerUsingCertificateThumbprint: thumbprint from our config file = " + thumbprint);
 
 		return thumbprintFromToken.equalsIgnoreCase(thumbprint);
 	}
